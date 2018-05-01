@@ -1,0 +1,359 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(tidy = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(fig.width=5, fig.height=6)
+
+
+measurePrecisionRecall <- function(predict, actual_labels){
+  precision <- sum(predict & actual_labels) / sum(predict)
+  recall <- sum(predict & actual_labels) / sum(actual_labels)
+  fmeasure <- 2 * precision * recall / (precision + recall)
+  
+  cat('\nPrecision:  ')
+  cat(round(precision,2))
+  cat('\n')
+
+  cat('Recall (sensitivity):     ')
+  cat(round(recall,2))
+  cat('\n')
+
+  cat('F-score:  ')
+  cat(round(fmeasure,2))
+  cat('\n')
+}
+printKmeans = function(k) {
+  
+  #print(k['withinss'])
+  #print(k['tot.withinss'])
+  #print(k['betweenss'])
+  #print(k['size'])
+  acc = as.double(k$betweenss) / as.double(k$totss)
+  sprintf("The accuracy for kmeans with %i clusters is %.2f%%.", length(k$size), acc )
+  
+}
+
+anb_original = as.data.frame(read.csv("dc.csv", quote = "\"",na.strings=c("","NA")))
+
+library('dplyr')
+
+# Removing non important nominal values
+anb_original$listing_url = NULL
+anb_original$scrape_id = NULL 
+anb_original$last_scraped = NULL 
+anb_original$name = NULL
+anb_original$summary = NULL
+anb_original$description = NULL
+anb_original$experiences_offered = NULL
+anb_original$neighborhood_overview = NULL
+anb_original$notes = NULL
+anb_original$transit = NULL
+anb_original$access = NULL
+anb_original$interaction = NULL
+
+anb_original$house_rules= anb_original$thumbnail_url = anb_original$medium_url = anb_original$picture_url = anb_original$xl_picture_url = NULL
+
+anb_original$host_url=anb_original$host_name=anb_original$host_since=anb_original$host_location =anb_original$host_about=NULL 
+
+anb_original$host_thumbnail_url=anb_original$host_picture_url=anb_original$host_neighbourhood= anb_original$host_verifications=anb_original$street=anb_original$neighbourhood= anb_original$neighbourhood_group_cleansed=NULL
+
+anb_original$country_code= anb_original$country= anb_original$calendar_updated= anb_original$has_availability=anb_original$availability_30  =anb_original$availability_60=anb_original$availability_90=anb_original$availability_365  =anb_original$calendar_last_scraped = NULL
+
+anb_original$first_review= anb_original$last_review=anb_original$requires_license=anb_original$license = NULL
+ 
+anb_original$space = anb_original$host_id = anb_original$id = anb_original$city = anb_original$state = anb_original$market = anb_original$smart_location = NULL
+
+#anb_original$weekly_price = as.numeric(anb_original$weekly_price)
+#anb_original$monthly_price = as.numeric(anb_original$monthly_price)
+#anb_original$security_deposit = as.numeric(anb_original$security_deposit)
+#anb_original$extra_people = as.numeric(anb_original$extra_people)
+#anb_original$cleaning_fee = as.numeric(anb_original$cleaning_fee)
+
+# Dealing with missing values
+sort(colSums(is.na(anb_original)),decreasing = T)
+
+# These columns are not important and have to many missing values
+anb_original$host_acceptance_rate = anb_original$square_feet = anb_original$monthly_price =
+anb_original$weekly_price = anb_original$security_deposit = anb_original$cleaning_fee =
+anb_original$host_response_time = anb_original$host_response_rate = anb_original$host_has_profile_pic = anb_original$jurisdiction_names = NULL
+
+# These columns have missing values which in fact means zero
+anb_original[is.na(anb_original$review_scores_accuracy),'review_scores_accuracy'] = 0
+anb_original[is.na(anb_original$review_scores_cleanliness),'review_scores_cleanliness'] = 0
+anb_original[is.na(anb_original$review_scores_checkin),'review_scores_checkin'] = 0
+anb_original[is.na(anb_original$review_scores_communication),'review_scores_communication'] = 0
+anb_original[is.na(anb_original$review_scores_location),'review_scores_location'] = 0
+anb_original[is.na(anb_original$review_scores_value),'review_scores_value'] = 0
+anb_original[is.na(anb_original$review_scores_rating),'review_scores_rating'] = 0
+anb_original[is.na(anb_original$reviews_per_month),'reviews_per_month'] = 0
+
+# These columns have missing values but seems to be important, so we will keep them and remove the records
+anb_original = anb_original[!is.na(anb_original$zipcode),]
+anb_original = anb_original[!is.na(anb_original$bathrooms),]
+anb_original = anb_original[!is.na(anb_original$bedrooms),]
+anb_original = anb_original[!is.na(anb_original$beds),]
+anb_original = anb_original[!is.na(anb_original$host_is_superhost),]
+anb_original = anb_original[!is.na(anb_original$host_listings_count),]
+anb_original = anb_original[!is.na(anb_original$host_total_listings_count),]
+anb_original = anb_original[!is.na(anb_original$host_identity_verified),]
+
+sort(colSums(is.na(anb_original)),decreasing = T)
+
+# lets take a look on the nominal variables
+str(anb_original)
+
+# Maybe these guys should stay
+group_by(anb_original, is_location_exact) %>% summarise(n())
+group_by(anb_original, require_guest_profile_picture) %>% summarise(n())
+group_by(anb_original, require_guest_phone_verification) %>% summarise(n())
+
+# cancellation_policy is definitely ordinal but do not worth convert it to an ordinal factor
+# The specilized literature says that many times is better to treat ordinal as dummie
+# Many methods in R (like Ridge and Lasso) will break if find a factor variable
+
+# Changing from an unordered factor to an ordered one and giving specifc order (lower to higher)
+#summary(anb_original$cancellation_policy)
+#anb_original$cancellation_policy = ordered(anb_original$cancellation_policy,                                            levels=c('super_strict_30','strict','moderate','flexible'))
+#class(anb_original$cancellation_policy)
+#levels(anb_original$cancellation_policy)
+
+# Looking important variable: price 
+range(anb_original$price)
+boxplot(anb_original$price) # Seems to have some outliers
+# removing price 0
+count(anb_original[anb_original$price==0,])
+anb_original = anb_original[anb_original$price!=0,]
+range(anb_original$price)
+# Lets see some range of values
+count(anb_original[anb_original$price >= 10 & anb_original$price < 100,])
+count(anb_original[anb_original$price >= 101 & anb_original$price < 200,])
+count(anb_original[anb_original$price >= 201 & anb_original$price < 300,])
+count(anb_original[anb_original$price >= 301 & anb_original$price < 400,])
+count(anb_original[anb_original$price >= 401 & anb_original$price < 500,])
+(anb_original[anb_original$price >= 600,])
+
+# Several different ranges. Seems very expensive rooms do not have any special characteristic. 
+# Whether ste least square would be filled
+# Probably will the difficult to the model distinguish what does a room very expensive
+
+# creating new quality field based on price
+#anb_original$room_level_price = cut(anb_original$price, seq(1,6000,100))
+#group_by(anb_original, room_level_price) %>% summarise(n())
+
+# ratings 
+group_by(anb_original, review_scores_accuracy) %>% summarise(n())
+group_by(anb_original, review_scores_cleanliness) %>% summarise(n())
+group_by(anb_original, review_scores_checkin) %>% summarise(n())
+group_by(anb_original, review_scores_location) %>% summarise(n())
+group_by(anb_original, review_scores_value) %>% summarise(n())
+group_by(anb_original, review_scores_rating) %>% summarise(n())
+
+
+# Creating dummy variables from ameties
+ameties_columns = unique(unlist(strsplit(gsub('(\")|(\\{)|(\\})' , "",as.character(levels(anb_original$amenities))), split = ',')))
+amenities_data_frame =  setNames(data.frame(matrix(ncol=length(ameties_columns),nrow=nrow(anb_original))), c(ameties_columns))
+i = 1
+for (x in anb_original$amenities){
+ for(amenitie in unlist(strsplit(gsub('(\")|(\\{)|(\\})' , " ",as.character(x)), split = ','))){
+   if(trimws(amenitie) == '')
+     next
+   amenities_data_frame[i,trimws(amenitie)] = 1
+   #print(trimws(amenitie))
+ }
+ i = i + 1
+}
+# Setting 0 for fatures the room does not have
+amenities_data_frame[is.na(amenities_data_frame)] = 0
+# removing original ametie column
+anb_original$amenities = NULL
+str(amenities_data_frame)
+
+```
+
+```{r}
+library(dummies)
+#library(dataPreparation)
+
+# Getting the other dummies
+# lm can handle dummie variables as well. The problem is that as we are using train/test separation, the lm applied over the train can miss factor levels as it is not seeing the whole dataset. This level can appear in the test set and, as a result, the prediction wont work. 
+dummies = dummy.data.frame(anb_original ,all = FALSE)
+#colnames(dummies)
+# Removing original values (library MLR does this automaticaly)
+anb_original$host_is_superhost = NULL
+anb_original$host_identity_verified = NULL
+anb_original$neighbourhood_cleansed = NULL
+anb_original$zipcode = NULL
+anb_original$property_type = NULL
+anb_original$require_guest_profile_picture = NULL
+anb_original$require_guest_phone_verification = NULL
+anb_original$room_type = NULL
+anb_original$bed_type = NULL
+anb_original$instant_bookable = NULL
+anb_original$is_location_exact = NULL
+anb_original$cancellation_policy = NULL
+#str(anb_original)
+
+# Transform them to factor as they come as int to prevent being scaled latter. 
+# No standardization this time
+#dummies = (lapply(FUN=function(x) as.factor(x),dummies))
+
+# Merge dummies and ameties_data_frame with the dataset
+anb_with_dummies = cbind(anb_original,dummies, amenities_data_frame)
+#str(anb_with_dummies)
+
+# Creating train/test sets
+train_index = sample(1:nrow(anb_with_dummies), .8*nrow(anb_with_dummies),replace = FALSE)
+
+X_train = anb_with_dummies[train_index,!(colnames(anb_with_dummies) %in% 'price')]
+y_train = anb_with_dummies[train_index,c('price')]
+X_test = anb_with_dummies[-train_index,!(colnames(anb_with_dummies) %in% 'price')]
+y_test = anb_with_dummies[-train_index,c('price')]  
+
+model1 = lm(y_train~., data = cbind(X_train,y_train))
+#plot(model1)
+#summary(model1)
+#Residual standard error: 296.5 on 5884 degrees of freedom
+#Multiple R-squared:  0.415,	Adjusted R-squared:  0.3918 
+#F-statistic: 17.91 on 233 and 5884 DF,  p-value: < 2.2e-16
+pred_model1 = predict(model1, newdata = X_test)
+sprintf("RMSE using Model 1: %f", sqrt(sum((unlist(pred_model1) - y_test)^2)/nrow(X_test)))
+shapiro.test(sample(model1$residuals,100))
+
+log2_ytrain = log2(y_train)
+model2 = lm(log2_ytrain~., data = cbind(X_train,log2_ytrain))
+#plot(model2)
+#summary(model2)
+#Log2
+#Residual standard error: 0.7694 on 5884 degrees of freedom
+#Multiple R-squared:  0.6431,	Adjusted R-squared:  0.629 
+#F-statistic:  45.5 on 233 and 5884 DF,  p-value: < 2.2e-16
+pred_model2 = predict(model2, newdata = X_test)
+#pred_model2 = lapply(FUN = function(x) 2^x, pred_model2)
+sprintf("RMSE using Model 2: %f", sqrt( sum((unlist(pred_model2) - log2(y_test))^2) / nrow(X_test)))
+
+log_ytrain = log(y_train)
+model3 = lm(log_ytrain~., data = cbind(X_train,log_ytrain))
+#plot(model3)
+#summary(model3)
+#Log1p
+#Residual standard error: 0.5298 on 5884 degrees of freedom
+#Multiple R-squared:  0.6429,	Adjusted R-squared:  0.6288 
+#F-statistic: 45.47 on 233 and 5884 DF,  p-value: < 2.2e-16
+pred_model3 = predict(model3, newdata = X_test)
+#pred_model3 = lapply(FUN = function(x) exp(x), pred_model3)
+sprintf("RMSE using Model 3: %f", sqrt( sum((unlist(pred_model3) - log(y_test))^2) / nrow(X_test)))
+# Like most statistical significance tests, if the sample size is sufficiently large this test may detect even trivial departures from the null hypothesis 
+shapiro.test(sample(model3$residuals,100))
+
+sqrt_ytrain = sqrt(y_train)
+model4 = lm(sqrt_ytrain~., data = cbind(X_train,sqrt_ytrain))
+#plot(model4)
+#summary(model4)
+#SQRT
+#Residual standard error: 5.173 on 7412 degrees of freedom
+#Multiple R-squared:  0.5609,	Adjusted R-squared:  0.5469 
+#F-statistic: 40.28 on 235 and 7412 DF,  p-value: < 2.2e-16
+pred_model4 = predict(model4, newdata = X_test)
+#pred_model4 = lapply(FUN = function(x) x^2, pred_model4)
+sprintf("RMSE using Model 4: %f", sqrt( sum((unlist(pred_model4) - sqrt(y_test))^2) / nrow(X_test)))
+
+
+```
+
+```{r}
+
+library("glmnet")
+set.seed(7)
+
+# alpha 0 means Ridge, alpha 1 means Lasso, in between means ElasticNet
+model5 = cv.glmnet(as.matrix(X_train),log(y_train),alpha=1)
+plot(model5)
+
+pred_model5 = predict(model5, s=model5$lambda.1se, newx=as.matrix(X_test))
+sprintf("RMSE using Model 5: %f", sqrt(mean((pred_model5 - log(y_test))^2)))
+
+#model5 = glmnet(as.matrix(X_train), log(y_train), type.gaussian="covariance", lambda=model5$lambda)
+#predict(model5,type = "coefficients")
+
+coefs = coef(model5, s = "lambda.1se", exact=T)
+inds<-which(coefs!=0)
+variables<-row.names(coefs)[inds]
+variables<-variables[!(variables %in% '(Intercept)')]
+
+X_train_less = X_train[,variables]
+X_test_less = X_test[,variables]
+
+model_less_features = cv.glmnet(as.matrix(X_train_less),log(y_train),alpha=1)
+pred = predict(model_less_features, s=model_less_features$lambda.1se, newx=as.matrix(X_test_less))
+sprintf("RMSE using Model 5: %f", sqrt(mean((pred - log(y_test))^2)))
+
+model1_less = lm(y_train~., data = cbind(X_train_less,y_train))
+#plot(model1_less)
+summary(model1_less)
+dim(X_train_less) #number of variables
+model1_less$rank #number of variables indeed used 
+#Residual standard error: 305.5 on 6032 degrees of freedom
+#Multiple R-squared:  0.4025,	Adjusted R-squared:  0.3941 
+#F-statistic: 47.81 on 85 and 6032 DF,  p-value: < 2.2e-16
+pred_model1_less = predict(model1_less, newdata = X_test_less)
+sprintf("RMSE using Model 1: %f", sqrt(sum((unlist(pred_model1_less) - y_test)^2)/nrow(X_test)))
+
+log_ytrain = log(y_train)
+model3_less_features = lm(log_ytrain~., data = cbind(X_train_less,log_ytrain))
+#plot(model3)
+summary(model3_less_features)
+#Log
+#Residual standard error: 0.5357 on 6032 degrees of freedom
+#Multiple R-squared:  0.635,	Adjusted R-squared:  0.6298 
+#F-statistic: 123.5 on 85 and 6032 DF,  p-value: < 2.2e-16
+pred_model3_less = predict(model3_less_features, newdata = X_test_less)
+#pred_model3 = lapply(FUN = function(x) exp(x), pred_model3)
+sprintf("RMSE using Model 3: %f", sqrt( sum((unlist(pred_model3_less) - log(y_test))^2) / nrow(X_test)))
+
+
+```
+
+```{r}
+
+cols = c('review_scores_accuracy','review_scores_cleanliness',
+ 'review_scores_checkin','review_scores_communication','review_scores_location',
+ 'review_scores_value') 
+
+anb_kmeans = anb_original[cols]
+anb_kmeans[is.na(anb_kmeans$review_scores_accuracy),'review_scores_accuracy'] = 0
+anb_kmeans[is.na(anb_kmeans$review_scores_cleanliness),'review_scores_cleanliness'] = 0
+anb_kmeans[is.na(anb_kmeans$review_scores_checkin),'review_scores_checkin'] = 0
+anb_kmeans[is.na(anb_kmeans$review_scores_communication),'review_scores_communication'] = 0
+anb_kmeans[is.na(anb_kmeans$review_scores_location),'review_scores_location'] = 0
+anb_kmeans[is.na(anb_kmeans$review_scores_value),'review_scores_value'] = 0
+
+# There are several different final rating 
+anb_original[is.na(anb_original$review_scores_rating),'review_scores_rating'] = 0
+range(anb_original$review_scores_rating)
+group_by(anb_original,review_scores_rating) %>% summarise(n())
+# We can use them to group similar ratings together
+
+k = (kmeans(anb_kmeans, 5, iter.max = 50, nstart=50))
+
+printKmeans(k)
+plot(anb_kmeans,col=k$cluster)
+
+cluster1 = anb_original[k$cluster==1,] 
+range(cluster1$review_scores_rating)
+group_by(cluster1 , review_scores_rating) %>% summarise(n())
+cluster2 = anb_original[k$cluster==2,] 
+range(cluster2$review_scores_rating)
+group_by(cluster2 , review_scores_rating) %>% summarise(n())
+cluster3 = anb_original[k$cluster==3,] 
+range(cluster3$review_scores_rating)
+group_by(cluster3 , review_scores_rating) %>% summarise(n())
+
+```
+
+```{r}
+
+
+```
+

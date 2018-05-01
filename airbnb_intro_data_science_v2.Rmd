@@ -1,0 +1,514 @@
+---
+title: "Using predictive models to estimate price"
+author: "Christian Braz, Fernando, Wen-Chuan Chang, Wang Xinning"
+date: "April 2018"
+fig_width: 3
+fig_height: 4
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(tidy = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(fig.width=5, fig.height=4)
+
+anb_original = as.data.frame(read.csv("dc.csv", quote = "\"",na.strings=c("","NA")))
+str(anb_original)
+
+```
+
+```{r, include=FALSE}
+
+## Preprocessing
+
+library('dplyr')
+
+# Removing non important nominal values
+anb_original$listing_url = NULL
+anb_original$scrape_id = NULL 
+anb_original$last_scraped = NULL 
+anb_original$name = NULL
+anb_original$summary = NULL
+anb_original$description = NULL
+anb_original$experiences_offered = NULL
+anb_original$neighborhood_overview = NULL
+anb_original$notes = NULL
+anb_original$transit = NULL
+anb_original$access = NULL
+anb_original$interaction = NULL
+
+anb_original$house_rules= anb_original$thumbnail_url = anb_original$medium_url = anb_original$picture_url = anb_original$xl_picture_url = NULL
+
+anb_original$host_url=anb_original$host_name=anb_original$host_since=anb_original$host_location =anb_original$host_about=NULL 
+
+anb_original$host_thumbnail_url=anb_original$host_picture_url=anb_original$host_neighbourhood= anb_original$host_verifications=anb_original$street=anb_original$neighbourhood=anb_original$neighbourhood_group_cleansed = NULL
+
+anb_original$country_code= anb_original$country= anb_original$calendar_updated= anb_original$has_availability=anb_original$availability_30  =anb_original$availability_60=anb_original$availability_90=anb_original$availability_365  =anb_original$calendar_last_scraped = NULL
+
+anb_original$first_review= anb_original$last_review=anb_original$requires_license=anb_original$license = NULL
+ 
+anb_original$space = anb_original$host_id = anb_original$id = anb_original$city = anb_original$state = anb_original$market = anb_original$smart_location = NULL
+
+# Dealing with missing values
+sort(colSums(is.na(anb_original)),decreasing = T)
+
+# These columns are not important and have to many missing values
+anb_original$host_acceptance_rate = anb_original$square_feet = anb_original$monthly_price =
+anb_original$weekly_price = anb_original$security_deposit = anb_original$cleaning_fee =
+anb_original$host_response_time = anb_original$host_response_rate = anb_original$host_has_profile_pic = anb_original$jurisdiction_names = NULL
+
+# These columns have missing values which in fact means zero
+anb_original[is.na(anb_original$review_scores_accuracy),'review_scores_accuracy'] = 0
+anb_original[is.na(anb_original$review_scores_cleanliness),'review_scores_cleanliness'] = 0
+anb_original[is.na(anb_original$review_scores_checkin),'review_scores_checkin'] = 0
+anb_original[is.na(anb_original$review_scores_communication),'review_scores_communication'] = 0
+anb_original[is.na(anb_original$review_scores_location),'review_scores_location'] = 0
+anb_original[is.na(anb_original$review_scores_value),'review_scores_value'] = 0
+anb_original[is.na(anb_original$review_scores_rating),'review_scores_rating'] = 0
+anb_original[is.na(anb_original$reviews_per_month),'reviews_per_month'] = 0
+
+# These columns have missing values but seems to be important, so we will keep them and remove the problematic records
+anb_original = anb_original[!is.na(anb_original$zipcode),]
+anb_original = anb_original[!is.na(anb_original$bathrooms),]
+anb_original = anb_original[!is.na(anb_original$bedrooms),]
+anb_original = anb_original[!is.na(anb_original$beds),]
+anb_original = anb_original[!is.na(anb_original$host_is_superhost),]
+anb_original = anb_original[!is.na(anb_original$host_listings_count),]
+anb_original = anb_original[!is.na(anb_original$host_total_listings_count),]
+anb_original = anb_original[!is.na(anb_original$host_identity_verified),]
+
+sort(colSums(is.na(anb_original)),decreasing = T)
+
+
+```
+![](./Airbnb_Logo.png)
+
+# Introduction 
+
+Airbnb is an American company which operates an online marketplace and hospitality service for people to lease or rent short-term lodging including holiday cottages, apartments, homestays, hostel beds, or hotel rooms, to participate in or facilitate experiences related to tourism such as walking tours, and to make reservations at restaurants. The company does not own any real estate or conduct tours; it is a broker which receives percentage service fees in conjunction with every booking. Like all hospitality services, Airbnb is an example of collaborative consumption and sharing. The company has over 4 million lodging listings in 65,000 cities and 191 countries and has facilitated over 260 million check-ins.
+
+One important issue regarding Airbnb is the property price. A new host would want to know how to set a proper value for her new advertised property. An old one would to know how her announcements compare with others similar to verify, for instance, whether they are being competitive.  Yet, from the final user perspective, one wants to know about good bargains, i.e., properties that are being offered for a price  inferior than expected. 
+
+Answering these questions encompass many concerns. The first one is: how to define the correct price of a property? What metric one should employ? Maybe the most common first insight would be using the average. Group similar properties, take the mean, and you would recommend the price of some place as the medium price of several similar properties. But now, how to create a group? What similarity metric should be employed? Group by location? But what if in the same location there are fairly different prices? Maybe location and some other characteristic of the property like number of bedrooms and bathrooms or whether it has Air conditioning, Internet and a disabled parking spot or not? As we can see, it is not an easy task. But guess what, we can use a statistical model to automatically capture the significant relationship information among all the variables and our goal, the price. 
+
+The aim of this work is trying to fit a robust linear model to predict the price of a property in the Airbnb real state service. It is worth noting that, as always, we are limited to the level of information contained in publicly available datasets. It is organized in the following way:
+
+ * Dataset description 
+ * Data cleaning and exploratory data analysis
+ * Generalized Linear Model
+    + Ordinary Least Square
+    + Lasso
+    + Interaction
+ * Conclusion
+
+#Dataset description 
+
+The specific Washington - DC [Airbnd dataset](http://insideairbnb.com/get-the-data.html) has 7788 rows and 95 variables.   
+
+#Data cleaning and exploratory data analysis
+
+In this section we briefly show the most important steps we have done in the preparation of our dataset. After removing nominal variables, either because they are useless or because we can not deal with them (text processing), treating missing values and changing long column names to shorter ones, we analyze the response variable **price**. First, the boxplot for it:
+
+```{r}
+
+# Looking important variable: price 
+# removing price 0
+anb_original = anb_original[anb_original$price!=0,]
+
+boxplot(anb_original$price) # Seems to have some outliers
+
+```
+
+ We can infer based on the boxplot that the price for most properties is below 400 dollars. All the values above are treated as outliers. Hence, it seems reasonable to build two different models, one for regular (medium) properties, and other for luxury ones. This way we could specialize the analysis and fit more accurate models. Then, we remove from our dataset all properties whose price is above U$400,00, and focus in this work solely on the most common prices. The new boxplot after removing prices is:
+ 
+ 
+```{r}
+
+anb_original = anb_original[anb_original$price <= 500 ,]
+boxplot(anb_original$price)
+rownames(anb_original) = NULL
+
+
+#### Doing feature engineering on amenities 
+ameties_columns = unique(unlist(strsplit(gsub('(\")|(\\{)|(\\})' , "",as.character(levels(anb_original$amenities))), split = ',')))
+amenities_data_frame =  setNames(data.frame(matrix(ncol=length(ameties_columns),nrow=nrow(anb_original))), c(ameties_columns))
+i = 1
+for (x in anb_original$amenities){
+ for(amenitie in unlist(strsplit(gsub('(\")|(\\{)|(\\})' , " ",as.character(x)), split = ','))){
+   if(trimws(amenitie) == '')
+     next
+   amenities_data_frame[i,trimws(amenitie)] = 1
+   #print(trimws(amenitie))
+ }
+ i = i + 1
+}
+# Setting 0 for features the room does not have
+amenities_data_frame[is.na(amenities_data_frame)] = 0
+# removing original amenitie column
+anb_original$amenities = NULL
+#str(amenities_data_frame)
+
+#### end feature engineering in amenities 
+
+#### Creating new column names for  neighbourhoods to facilitate visualization later on
+neighbourhood_ = vector(mode="list", length=length(unique(anb_original$neighbourhood_cleansed)))
+names(neighbourhood_) = unlist(unique(anb_original$neighbourhood_cleansed))
+for(x in unique(anb_original$neighbourhood_cleansed)){
+  neighbourhood_[x] = as.character(unlist(strsplit(x,','))[1])
+}
+
+rownames(anb_original) = NULL
+
+#Using apply did not work 
+#anb_original$neighbourhood = lapply(FUN=function(x) neighbourhood_[x], anb_original$neighbourhood_cleansed)
+
+neighbourhood = list()
+
+i = 1
+for(x in anb_original$neighbourhood_cleansed){
+  #print(neighbourhood_[x])
+  neighbourhood[i] = neighbourhood_[x]
+  i = i + 1
+}
+anb_original$neighbourhood = (unlist(neighbourhood))
+anb_original$neighbourhood = as.factor(anb_original$neighbourhood)
+#str(anb_original)
+anb_original$neighbourhood_cleansed = NULL
+
+#### end creating new column names
+
+
+library(dummies)
+#library(dataPreparation)
+
+# Getting the other dummies
+# lm can handle dummie variables as well. The problem is that as we are using train/test separation, the lm applied over the train can miss factor levels as it is not seeing the whole dataset. This level can appear in the test set and, as a result, the prediction wont work. Also, other functions for other models (as Lasso) may not deal with dummies intrinsically. Hence, it is better to take control of this. 
+dummies = dummy.data.frame(anb_original ,all = FALSE)
+#str(dummies)
+#colnames(dummies)
+# Removing original values (library MLR does this automaticaly)
+anb_original$host_is_superhost = NULL
+anb_original$host_identity_verified = NULL
+anb_original$neighbourhood = NULL
+anb_original$zipcode = NULL
+anb_original$property_type = NULL
+anb_original$require_guest_profile_picture = NULL
+anb_original$require_guest_phone_verification = NULL
+anb_original$room_type = NULL
+anb_original$bed_type = NULL
+anb_original$instant_bookable = NULL
+anb_original$is_location_exact = NULL
+anb_original$cancellation_policy = NULL
+#str(anb_original)
+
+# Transform them to factor as they come as int to prevent being scaled latter. 
+# No standardization this time
+#dummies = (lapply(FUN=function(x) as.factor(x),dummies))
+
+
+# Merge dummies and ameties_data_frame with the dataset
+anb_with_dummies = cbind(anb_original,dummies, amenities_data_frame)
+#str(anb_with_dummies)
+
+```
+ 
+ Other important step is transform amenities in a way suitable to being used. This variable comes originally in the following way:
+ 
+ >{TV,Internet,Wireless Internet,Air conditioning,Kitchen,Free parking,Pets allowed}
+ 
+ These are all the specific characteristics of a property and bring much information about them. Thus, we extract each one of each property and make them available for the model.
+ 
+#Generalized Linear Model
+
+##Ordinary Least Square
+
+After an extensive preprocessing step, we fit our first linear model. Its main characteristics are:
+
+ * Using all variables (remaining after the cleaning phase).
+ * Encoding of nominal variables (one-hot encoding).
+ * No kind of data transformation (neither on the predictors or on the response).
+ * No interaction terms
+
+
+```{r,fig.width=3.5, fig.height=4}
+# Creating train/test sets
+set.seed(7)
+train_index = sample(1:nrow(anb_with_dummies), .8*nrow(anb_with_dummies),replace = FALSE)
+
+X_train = anb_with_dummies[train_index,!(colnames(anb_with_dummies) %in% 'price')]
+y_train = anb_with_dummies[train_index,c('price')]
+X_test = anb_with_dummies[-train_index,!(colnames(anb_with_dummies) %in% 'price')]
+y_test = anb_with_dummies[-train_index,c('price')]  
+
+model1 = lm(y_train~., data = cbind(X_train,y_train))
+pred_model1 = predict(model1, newdata = X_test)
+sprintf("Test RMSE OLS: %f", sqrt(sum((unlist(pred_model1) - y_test)^2)/nrow(X_test)))
+plot(model1)
+#summary(model1)
+
+shapiro.test(sample(model1$residuals,100))
+
+```
+
+
+Lets start assessing some diagnostics of the model. 
+
+
+>Residual standard error: 74.58 on 5290 degrees of freedom
+
+>Multiple R-squared:  0.5014,	Adjusted R-squared:  0.4799 
+
+>F-statistic: 23.23 on 229 and 5290 DF,  p-value: < 2.2e-16
+
+
+
+We can see that the RSE is 74.5. RSE is an accuracy metric difficult to evaluate alone as it does not have any implicit baseline for comparison. On the other hand, adjusted R-squared and F-statistics are good to capture the overall performance of the model. Both are telling that the model is significant, i.e., there is at least one variable highly correlated with price and roughly 50% of the variability is being explained.  But our objective is build a robust model to explain price, and we are not satisfied with this numbers. The error in test time is 79.88, as expected a little bit higher than the training RSE.
+
+Now lets take a look in the plots. The top left shows the "residuals plot" (y  axis are the residuals of the model and x axis are the predicted values). This plot is important because we can validate whether certain assumptions of a linear model are being held. These assumptions are:
+
+ 1. Linearity of the relationship between dependent and independent variables.
+ 2. Independence of the errors terms. 
+ 3. Constant variance of the errors terms.
+ 4. Normality of the error distribution.
+
+Linear regression model assumes that there is a straight-line relationship between the predictors and the response. If the true relationship is not linear, then all the conclusions would be suspect. Residual plots are a useful graphical tool for identifying non-linearity. Ideally, the residual plot will show no discernible pattern. The presence of a pattern may indicate a problem with some aspect of the linear model. If the residual plot indicates that there are non-linear associations in the data, then a simple approach is to use non-linear transformations of the predictors or the response, such as log or quadratic. The constant variance of the error terms means that the error terms have the same variance. So, no matter in each point on the line you analyze the variance, it will be roughly the same.  What you hope not to see are errors that systematically get larger in one direction by a significant amount. One can identify non-constant variances in the errors (or heteroscedasticity) from the presence of a funnel shape in the residual plot. 
+
+The top right plot shows that the errors do not follow a normal distribution what is confirmed by the Shapiro-Wilk test with a very small p-value. The two others right below confirm the problems and show that possibly there are dangerous outliers and high leverage points.  
+
+Hence, analyzing the residual plot, we can observe a non-linear pattern in the graph and also a kind of funnel shape, what is a strong sign of non-linearity and heteroscedasticity. To improve our model, we now employ a **log** transformation on the response variable price. The log transformation is proper in this situation because price does not have neither zero, nor negative values. Below we can verify the results for this second model.
+
+
+```{r,fig.width=3.5, fig.height=4}
+
+log_ytrain = log(y_train)
+model3 = lm(log_ytrain~., data = cbind(X_train,log_ytrain))
+#log
+pred_model3 = predict(model3, newdata = X_test)
+sprintf("Log test RMSE OLS: %f", log(sqrt(sum((unlist(pred_model1) - y_test)^2)/nrow(X_test))))
+sprintf("Test RMSE OLS log transform: %f", sqrt( sum((unlist(pred_model3) - log(y_test))^2) / nrow(X_test)))
+
+plot(model3)
+#summary(model3)
+shapiro.test(sample(model3$residuals,100))
+
+```
+
+The performance of this model is superior. 
+
+>Residual standard error: 0.4123 on 5290 degrees of freedom
+
+>Multiple R-squared:  0.5931,	Adjusted R-squared:  0.5755 
+
+>F-statistic: 33.67 on 229 and 5290 DF,  p-value: < 2.2e-16
+
+
+
+We can see that R-squared and F-statistic increased. Also, now there are no discernible pattern in the residual plot anymore and the error terms are much more normal (Shapiro-Wilk p-value much higher), despite the presence of outliers and high leverage points. However, the most impressive result was the sensible decrease in the test RSE, from  4.4 (to be able to compare the results we took the natural log of 79.9) to 0.44. It is almost 10 times lower. From now on, all the tests are performed on a log-scaled price. 
+
+##Lasso
+
+Our next attempt is to experiment the Lasso model to verify whether some normalization would improve the performance even more and also trying to make feature selection. To do so, we have used the **glmnet** package with the *alpha* parameter seted to 1 (which implies Lasso). First we run *cv.glmnet* to determine the best *lambda* and then we predict using the test set and calculate the error. The results are as follow.   
+
+
+```{r}
+
+library("glmnet")
+set.seed(7)
+
+# alpha 0 means Ridge, alpha 1 means Lasso, in between means ElasticNet
+model_lasso = cv.glmnet(as.matrix(X_train),log(y_train),alpha=1)
+pred_model_lasso = predict(model_lasso, s=model_lasso$lambda.1se, newx=as.matrix(X_test))
+sprintf("Test RMSE Lasso (%f) with lambda as %f ", sqrt(mean((pred_model_lasso - log(y_test))^2)), model_lasso$lambda.1se)
+
+
+```
+
+We do not note any expressive improvement in the test error. Maybe regularization does not play an important role in this problem because the OLS is well suited for the data. In other words, OLS has the right complexity. We now use the features selected by Lasso to fit Lasso and OLS again.  
+
+```{r}
+
+# getting the features selected (coef != 0)
+coefs = coef(model_lasso, s = "lambda.1se", exact=T)
+inds = which(coefs!=0)
+variables = row.names(coefs)[inds]
+variables = variables[!(variables %in% '(Intercept)')]
+
+# Just to facilitate some plot
+# data frame with column names as the selected features
+features = setNames(data.frame(matrix(ncol=length(variables),nrow = 1)),c(variables))
+# geting the coeficients but the intercept
+features = rbind(features,as.list(coefs[coefs!=0])[-1])
+
+```
+
+The results are the following.
+
+```{r}
+X_train_less = X_train[,variables]
+X_test_less = X_test[,variables]
+
+model_less_features = cv.glmnet(as.matrix(X_train_less),log(y_train),alpha=1)
+pred = predict(model_less_features, s=model_less_features$lambda.1se, newx=as.matrix(X_test_less))
+sprintf("Models with features selected by Lasso - %i predictors", length(variables))
+cat("\n")
+sprintf("Test RMSE Lasso: %f", sqrt(mean((pred - log(y_test))^2)))
+
+#model1_less = lm(y_train~., data = cbind(X_train_less,y_train))
+#plot(model1_less)
+#summary(model1_less)
+#dim(X_train_less) #number of variables
+#model1_less$rank #number of variables indeed used 
+#Residual standard error: 305.5 on 6032 degrees of freedom
+#Multiple R-squared:  0.4025,	Adjusted R-squared:  0.3941 
+#F-statistic: 47.81 on 85 and 6032 DF,  p-value: < 2.2e-16
+#pred_model1_less = predict(model1_less, newdata = X_test_less)
+#sprintf("Log RMSE OLS for raw model: %f", log(sqrt(sum((unlist(pred_model1_less) - y_test)^2)/nrow(X_test))))
+
+model3_less_features = lm(log_ytrain~., data = cbind(X_train_less,log_ytrain))
+#plot(model3)
+#summary(model3_less_features)
+
+pred_model3_less = predict(model3_less_features, newdata = X_test_less)
+sprintf("Test RMSE OLS: %f", sqrt( sum((unlist(pred_model3_less) - log(y_test))^2) / nrow(X_test)))
+
+
+
+```
+
+>Residual standard error: 0.4148 on 5443 degrees of freedom
+
+>Multiple R-squared:  0.5762,	Adjusted R-squared:  0.5703 
+
+>F-statistic: 97.37 on 76 and 5443 DF,  p-value: < 2.2e-16
+
+
+
+The model is still significant, with no improvement in R-squared and a slight decrease in test RSE. 
+
+
+```{r, eval=FALSE}
+
+aux = (coef(model3_less_features))
+aux = (as.list(aux))
+i = 1
+for (x in aux){
+  print(aux[i])
+  cat("\n")
+  i = i + 1
+}
+
+```
+
+In our final attempt trying to get the most robust liner model possible, we employ a backward  feature selection strategy to reduce the number of features even more. After some experimentation, we find a good middle term being 40 features. The results for this model are:  
+
+```{r}
+
+library(leaps)
+reg.best <- regsubsets(price~., data = anb_with_dummies, nvmax = 200, method = "backward", nbest = 1)
+
+#coef(reg.best,1:3)
+
+#plot(reg.best, scale = "adjr2", main = "Adjusted R^2")
+
+# getting a matrix with all models 
+best.subset.summary <- summary(reg.best)
+outma = best.subset.summary$outmat # A version of the which component that is formatted for printing
+which = best.subset.summary$which # A logical matrix indicating which elements are in each model
+
+i = 1
+regsubset_features = list()
+for(x in which[40,]){
+  
+  # we want to select a model with 20 variables, then which[20,]
+  if(which[40,i] == TRUE)
+    regsubset_features = c(regsubset_features,c=(gsub('(\")|(\`)', 
+                                                      "",as.character(colnames(which)[i]))))
+  i = i + 1
+}
+
+model_regsubset = lm(log_ytrain~., data = cbind(X_train[,unlist(regsubset_features[2:41])],log_ytrain))
+
+summary_model_regsubset = summary.lm(model_regsubset)
+library( broom )
+statistics = tidy(model_regsubset)
+statistics$std.error = NULL
+knitr::kable(statistics)
+#print(statistics)
+#plot(model_regsubset)
+
+pred_model_regsubset = predict(model_regsubset, newdata = X_test[,unlist(regsubset_features[2:41])])
+sprintf("Test RMSE OLS: %f", sqrt( sum((unlist(pred_model_regsubset) - log(y_test))^2) / nrow(X_test)))
+
+# number of variables for best adjr2 model 
+#best.subset.by.adjr2 <- which.max(best.subset.summary$adjr2)s
+
+```
+
+> Residual standard error: 0.4202 on 5479 degrees of freedom
+
+> Multiple R-squared:  0.5623,	Adjusted R-squared:  0.5591 
+
+> F-statistic: 175.9 on 40 and 5479 DF,  p-value: < 2.2e-16
+
+
+In this more interpretable model, despite the little reduction in the R-squared, we can note that even with just forty predictors the test RSE is the same as the previous with `r length(variables)`. 
+We can also draw some conclusions:
+
+ * Even small, breakfast has a positive impact.
+ * A couple of good neighbourhood.
+ * Wireless Internet is not good (weird).
+
+
+##Interaction
+
+Identify whether there are synergy between the predictors can make a big difference in the overall performance of the model. It is a computational expensive task but as now we have only forty predictors we can try. Next, we present the result of our last model, in which we are assessing the interaction of all variables two by two. We could not evaluate more than two due to the limitations of our computational resources. 
+
+```{r}
+
+## Interaction
+
+model_interaction = lm(log_ytrain~(.)^2, data = cbind(X_train[,unlist(regsubset_features[2:41])],log_ytrain))
+#summary.lm(model_interaction)
+
+pred_model_interaction = predict(model_interaction, newdata = X_test[,unlist(regsubset_features[2:41])])
+sprintf("Test RMSE OLS: %f", sqrt( sum((unlist(pred_model_interaction) - log(y_test))^2) / nrow(X_test)))
+
+
+```
+>Residual standard error: 0.3934 on 4844 degrees of freedom
+
+>Multiple R-squared:  0.6607,	Adjusted R-squared:  0.6135 
+
+>F-statistic: 13.98 on 675 and 4844 DF,  p-value: < 2.2e-16
+
+It is the first time we get a R-squared bigger than 0.6. 
+
+
+#Conclusion
+
+In this work we conduct an analysis trying to fit a robust linear model to estimate price in Airbnb dataset. Having a good price prediction is valuable to understand the Airbnb market better and the company can use it as insight to make more informed decisions. The host can have a more precise ideia about the current value of its property,  and decide whether want to be more competitive or more eager. The guest can make better choices and catch the opportunities available. 
+
+We begin fitting a standard linear model which shows some disabilities due to problems such as non-linearity of the data. Then, we apply a log transformation on price in the attempt of making the data more linear and the errors more normally distributed. As a result of such transformation, we get a more stable data and an overall better model. Next we try employ some regularization via Lasso regressor which did not show any significant improvement in the test RSE. Using the feature selection capability of Lasso, we fit new models, all of them showing similar accuracy of the previous. Not satisfied, we use a backward feature selection strategy to reduce the number of features. Now we have just forty features capturing the same amount of variability as the previous models. It is useful to try a computational expensive procedure of testing the interactions among features. Our last model with interactions was not the more precise in terms of test RSE (0.02 worse) but has the best R-squared statistic we could achieve. 
+
+Some limitations of our work that can be address in the future are:
+
+ * more in depth treatment of outliers and high leverage points;
+ * textual processing to extract meaning of descriptve fields;
+ * non-linear tranformation of the predictors;
+ * and try interaction terms over than two  by two combinations. 
+
+
+#References
+
+Airbnb dataset (http://insideairbnb.com/get-the-data.html)
+
+Choudary, Sangeet. "The Airbnb Advantage". TheNextWeb.
+
+Choudary, Sangeet (31 January 2014). "A Platform Thinking Approach to Innovation". Wired.
+
+ "Company Overview of Airbnb, Inc". Bloomberg L.P. 7 January 2018. Archived from the original on 8 January 2018. Retrieved 8 January 2018.
+ 
+Hastie, T., Tibshirani, R., Friedman, J. (2008). The elements of statistical learning: Data mining, 	inference and prediction. New York, NY: Springer.
