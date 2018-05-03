@@ -2,10 +2,11 @@
 title: "Using predictive models to estimate price"
 author: "Christian Braz"
 date: "April 2018"
+output:
+  pdf_document: default
+  html_document: default
 fig_width: 3
 fig_height: 4
-output:
-  html_document: default
 ---
 
 ```{r setup, include=FALSE}
